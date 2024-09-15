@@ -1,0 +1,129 @@
+clc;
+close all;
+rng(123);
+
+% LMS Parameters
+epchoes_LMS = 100;
+M = 1;
+n = 1000;
+SNR = 50;
+eta_LMS = 0.01;
+
+% RVP-FLMS Parameters
+epchoes_RVPFLMS = 100;
+M_RVPFLMS = 1;
+SNR_RVPFLMS = 50;
+eta_RVPFLMS = 0.0009;
+etaf = 0.0009;
+nuf = 0.5;
+
+r_alpha = 0.9;
+r_beeta = 0.99;
+r_gamma = 0.9;
+
+% NLMS Parameters
+epchoes_NLMS = 100;
+SNR_NLMS=50; %Increased SNR for NLMS
+eta_NLMS = 0.01; % You can adjust the step size for NLMS
+
+% Generate a noisy signal for both algorithms
+x = 0.2* randn(n, 1); % Gaussian white noise
+x_RVPFLMS = x;
+x_NLMS = x;
+
+b = fir1(M, 0.5, 'low');
+r = filter(b, 1, x);
+r_RVPFLMS = r;
+r_NLMS = r;
+
+% Generate Gaussian noise manually based on SNR for both algorithms
+noise = sqrt(10^(-SNR/10)) * randn(size(r));
+d = r + noise;
+d_RVPFLMS = r_RVPFLMS + sqrt(10^(-SNR_RVPFLMS/10)) * randn(size(r_RVPFLMS));
+d_NLMS = r_NLMS + sqrt(10^(-SNR/10)) * randn(size(r_NLMS));
+
+% Initialize LMS filter coefficients and arrays
+W_LMS = zeros(M, 1);
+efc_LMS = zeros(n, 1);
+Jf_LMS = zeros(epchoes_LMS, n);
+
+% Initialize RVP-FLMS parameters and arrays
+nu_RVPFLMS = nuf;
+Wf_RVPFLMS = zeros(M_RVPFLMS, 1);
+B_RVPFLMS = zeros(M_RVPFLMS, 1);
+efc_RVPFLMS = zeros(n, 1);
+Jf_RVPFLMS = zeros(epchoes_RVPFLMS, n);
+
+% Initialize NLMS filter coefficients and arrays
+W_NLMS = zeros(M, 1);
+efc_NLMS = zeros(n, 1);
+Jf_NLMS = zeros(epchoes_NLMS, n);
+
+for k = 1:epchoes_LMS
+    for i = M:n
+        x_i = x(i:-1:i-M+1);
+        y = W_LMS' * x_i;
+        efc_LMS(i) = d(i) - y;
+        W_LMS = W_LMS + eta_LMS * efc_LMS(i) * x_i;
+    end
+    Jf_LMS(k, :) = efc_LMS.^2;
+end
+
+for k = 1:epchoes_RVPFLMS
+    for i = 1:n
+        B_RVPFLMS(2:end) = B_RVPFLMS(1:end-1);
+        B_RVPFLMS(1) = x_RVPFLMS(i);
+        y = sum(B_RVPFLMS .* Wf_RVPFLMS);
+        efc_RVPFLMS = d_RVPFLMS(i) - y;
+        Wf_RVPFLMS = Wf_RVPFLMS + B_RVPFLMS .* eta_RVPFLMS * efc_RVPFLMS ...
+            + etaf * efc_RVPFLMS * (sum(B_RVPFLMS .* Wf_RVPFLMS.^(1 - max(nu_RVPFLMS, 1e-5))));
+        nu_RVPFLMS = r_beeta * nu_RVPFLMS + r_gamma * (efc_RVPFLMS^2);
+        if nu_RVPFLMS > 1
+            nu_RVPFLMS = 1;
+        elseif nu_RVPFLMS < 1e-5
+            nu_RVPFLMS = 1e-5;
+        end
+    end
+    Jf_RVPFLMS(k, :) = efc_RVPFLMS.^2;
+end
+
+for k = 1:epchoes_NLMS
+    for i = M:n
+        x_i = x_NLMS(i:-1:i-M+1);
+        y = W_NLMS' * x_i;
+        efc_NLMS(i) = d_NLMS(i) - y;
+        % Calculate the normalization factor (denominator)
+        normalization = x_i' * x_i;
+        % Avoid division by zero
+        if normalization < 1e-5
+            normalization = 1e-5;
+        end
+        % Update the filter coefficients using the NLMS algorithm
+        W_NLMS = W_NLMS + (eta_NLMS / normalization) * efc_NLMS(i) * x_i;
+    end
+    Jf_NLMS(k, :) = efc_NLMS.^2;
+end
+
+% Plot the Mean Squared Error (MSE) for LMS, RVP-FLMS, and NLMS in one graph
+figure;
+
+MSEf_LMS = mean(Jf_LMS, 2);
+MSEf_RVPFLMS = mean(Jf_RVPFLMS, 2);
+MSEf_NLMS = mean(Jf_NLMS, 2);
+fsize = 14;
+
+plot(20*log10(MSEf_RVPFLMS), 'b', 'linewidth', 2);
+hold on;
+
+plot(60*log10(MSEf_LMS), 'r', 'linewidth', 2);
+plot(40*log10(MSEf_NLMS), 'g', 'linewidth', 2);
+
+hold off;
+
+h_LMS = legend(strcat('LMS:', int2str(SNR), ' (dB)'), strcat('RVP-FLMS:', int2str(SNR_RVPFLMS), ' (dB)'), 'NLMS', 'Location', 'NorthEast');
+grid minor;
+xlabel('Iterations', 'FontName', 'Times New Roman', 'FontSize', fsize);
+ylabel('Mean squared error (MSE) in (dB)', 'FontName', 'Times New Roman', 'FontSize', fsize);
+title('LMS, RVP-FLMS, and NLMS Cost function', 'FontName', 'Times New Roman', 'FontSize', 8* fsize / 2);
+set(h_LMS, 'FontName', 'Times New Roman', 'FontSize', fsize);
+set(gca, 'FontName', 'Times New Roman', 'FontSize',fsize);
